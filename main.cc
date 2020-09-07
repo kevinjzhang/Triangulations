@@ -23,6 +23,9 @@
 
 // #define STAT
 // #define CORRECTNESS
+// #define TIMING
+#define SEARCH
+#define REGINASIG
 
 using namespace regina;
 
@@ -86,14 +89,20 @@ int main(int argc, char *argv[]) {
         std::string name;
         in >> name;
         Triangulation<3>* triangulation = Triangulation<3>::fromIsoSig(name);
+        //Reorder labels randomly
+        std::string newName = IsoSig::computeSignature(triangulation);
         Triangulation<3>* triCopy = Triangulation<3>::fromIsoSig(IsoSig::computeSignature(triangulation));
         if (name != triCopy->isoSig()) {
-            out << "Case Error" << std::endl;
+            out << "Case Error 1" << std::endl;
+        }
+        if (newName != IsoSig::computeSignature(triCopy)) {
+            out << "Case Error 2" << std::endl;
         }
         delete triangulation;
         delete triCopy;
     }
-#else
+#endif
+#ifdef TIMING
     std::vector<Triangulation<3>*> triangulations;
     for(int x = 0; x < number; x++) {
         std::string name;
@@ -115,6 +124,22 @@ int main(int argc, char *argv[]) {
     auto stop2 = std::chrono::high_resolution_clock::now();
     duration = std::chrono::duration_cast<std::chrono::microseconds>(stop2 - stop);
     out << "Old: " << duration.count() << std::endl;
+#endif
+#ifdef SEARCH
+    std::vector<std::string> names;
+    int maxHeight;
+    in >> maxHeight;
+    for(int x = 0; x < number; x++) {
+        std::string name;
+        in >> name;
+        //Names in new isoSig form
+#ifdef REGINASIG
+        names.emplace_back(name);
+#else
+        names.emplace_back(IsoSig::computeSignature(Triangulation<3>::fromIsoSig(name)));
+#endif
+    }
+    Search::searchExhaustive(names, maxHeight); 
 #endif
     out.close();
     return 0;

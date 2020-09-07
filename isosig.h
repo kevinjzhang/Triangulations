@@ -174,9 +174,7 @@ private:
     }
 
 public:
-    //Need to debug segfault
     static std::string computeSignature(Triangulation<3>* triangulation) {
-        std::vector<std::string> signatures;
         std::vector<SimplexInfo> properties;
         for (int i = 0; i < triangulation->size(); i++) {
             Simplex<3>* tetrahedra = triangulation->simplex(i);
