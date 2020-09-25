@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <mutex>
+#include <atomic>  
 #include <unordered_map>
 
 #include <unistd.h>
@@ -15,7 +16,7 @@
 #include<triangulation/detail/triangulation.h>
 #include<triangulation/detail/isosig-impl.h>
 
-
+#define MEM_LIMITS 1
 /* Warning: Sigset and processqueue share lock called processqueue
 */
 
@@ -33,12 +34,20 @@ private:
             if (processingQueue.size() > 0) {
                 sig = processingQueue.front();
                 processingQueue.pop();
+            #ifdef MEM_LIMITS
+                sigSet.insert(sig);
+            #endif
+                std::cout << sig << std::endl;
             }
         }
         if (sig.size() == 0) {
             return;
         }
+    #ifdef MEM_LIMITS
+        Triangulation<dim>* t = Triangulation<dim>::fromIsoSig(sig);
+    #else
         Triangulation<dim>* t = sigSet[sig];
+    #endif
         std::vector<Triangulation<dim>*> adj = getPachnerMoves(t, tLimit);
         //Convert all to sigs and add to processingQueue + sigSet
         for (auto tri : adj) {
@@ -46,7 +55,11 @@ private:
             #pragma omp critical(processQueue)
             {
                 if (sigSet.count(s) == 0) { //New triangulation
+                #ifdef MEM_LIMITS
+                    delete tri;
+                #else
                     sigSet[s] = tri;
+                #endif
                     processingQueue.push(s);
                 } else { //Duplicate triangulation found
                     delete tri;
@@ -128,18 +141,25 @@ public:
     }
 
     template <int dim>
-    static void searchExhaustive(std::vector<std::string> & start, int tLimit) {
-        std::unordered_map<std::string, Triangulation<3>*> sigSet;
+    static void searchExhaustive(std::vector<std::string> & start, int tLimit, int sizeLimit) {
+    #ifdef MEM_LIMITS
+        std::unordered_set<std::string> sigSet;
+    #else
+        std::unordered_map<std::string, Triangulation<dim>*> sigSet;
+    #endif
         //(MPI)Must receive into this queue when message received
         std::queue<std::string> processingQueue;
         for (auto name : start) {
             processingQueue.push(name);
+        #ifndef MEM_LIMITS
             sigSet[name] = Triangulation<dim>::fromIsoSig(name);
+        #endif
         }
         #pragma omp parallel
         #pragma omp single
         {
-            while(!processingQueue.empty()) {
+            //Caution, if processing queue becomes empty on main thread
+            while(!processingQueue.empty() || sigSet.size() < sizeLimit) {
                 #pragma omp task
                 {
                     processNode<dim>(sigSet, processingQueue, tLimit);
@@ -147,6 +167,7 @@ public:
             }
             #pragma omp taskwait
         }
+        std::cout << processingQueue.size() << std::endl;
         std::cout << sigSet.size() << std::endl;
     }
 };

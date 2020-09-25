@@ -29,7 +29,6 @@ class SearchParallel {
             char* buffer = (char*)malloc(sizeof(char) * count);
             MPI_Recv(buffer, count, MPI_CHAR, MPI_ANY_SOURCE, tag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
             std::string recvSig = std::string(buffer);
-            std::cout << "Recv: " << recvSig << std::endl;
             #pragma omp critical(processQueue) 
             {
                 if (sigSet.count(recvSig) == 0) { 
@@ -66,6 +65,7 @@ class SearchParallel {
             if (processingQueue.size() > 0) {
                 sig = processingQueue.front();
                 processingQueue.pop();
+                std::cout << sig << std::endl;
             }
         }
         if (sig.size() == 0) {
@@ -117,7 +117,6 @@ class SearchParallel {
                     MPI_Buffer_attach(b, bufsize);
                     while (sendBatch[hash].size() > 0) {
                         std::string item = sendBatch[hash].front();
-                        std::cout << "Send: " << item << std::endl;
                         sendBatch[hash].pop();
                         MPI_Bsend(&item[0], item.size() + 1, MPI_CHAR, hash, tag, MPI_COMM_WORLD);
                     }
@@ -136,7 +135,7 @@ public:
         MPI_Comm_size(MPI_COMM_WORLD, &nComp);
         MPI_Comm_rank(MPI_COMM_WORLD, &rank);
         std::vector<std::queue<std::string>> sendBatch(nComp);
-        std::unordered_map<std::string, Triangulation<3>*> sigSet;
+        std::unordered_map<std::string, Triangulation<dim>*> sigSet;
         //Main application here:
         //(MPI)Must receive into this queue when message received
         std::queue<std::string> processingQueue;
