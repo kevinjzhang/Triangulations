@@ -18,7 +18,7 @@ class SearchParallel {
         std::cout << s << " Rank:" << rank << std::endl;
     }
 
-    template <class T, class U>
+    template <int dim, class T, class U>
     static bool receive(T& sigSet, U& processingQueue) {
         MPI_Status status;
         int flag;
@@ -33,7 +33,7 @@ class SearchParallel {
             #pragma omp critical(processQueue) 
             {
                 if (sigSet.count(recvSig) == 0) { 
-                    sigSet[recvSig] = Triangulation<3>::fromIsoSig(recvSig);
+                    sigSet[recvSig] = Triangulation<dim>::fromIsoSig(recvSig);
                     processingQueue.push(recvSig);
                 }
             }
@@ -43,7 +43,7 @@ class SearchParallel {
     }
 
     //Waits for a small amount of time and checks if there is a message from any source
-    template <class T, class U>
+    template <int dim, class T, class U>
     static bool check_status(T& sigSet, U& processingQueue) {
         int flag;
         MPI_Status status;
@@ -52,13 +52,13 @@ class SearchParallel {
         bool res;
         #pragma omp critical(receive)
         {
-            res = receive(sigSet, processingQueue);
+            res = receive<dim>(sigSet, processingQueue);
         }
         return res;
     }
 
     //Process nodes function in parallel
-    template <class T, class U>
+    template <int dim, class T, class U>
     static void processNodeParallel(T& sigSet, U& processingQueue, int tLimit, std::vector<std::queue<std::string>>& sendBatch, int rank) {
         std::string sig;
         #pragma omp critical(processQueue)
@@ -71,24 +71,24 @@ class SearchParallel {
         if (sig.size() == 0) {
             return;
         }
-        Triangulation<3>* t = sigSet[sig];
-        std::vector<Triangulation<3>*> adj = Search::getPachnerMoves(t, tLimit);
+        Triangulation<dim>* t = sigSet[sig];
+        std::vector<Triangulation<dim>*> adj = Search::getPachnerMoves(t, tLimit);
         //Convert all to sigs and add to processingQueue + sigSet
         for (auto tri : adj) {
-            queueSig(sigSet, processingQueue, tri, sendBatch, rank);
+            queueSig<dim>(sigSet, processingQueue, tri, sendBatch, rank);
         }
         //Deleting triangulation occurs after it has been processed
         delete t;      
         //MPI receive into queue -> number of time it is non-empty
         #pragma omp critical(receive)
         {
-            receive(sigSet, processingQueue);
+            receive<dim>(sigSet, processingQueue);
         }
     }
 
     //General function for queuing signature (multiple machines)
-    template <class T, class U>
-    static void queueSig(T& sigSet, U& processingQueue, Triangulation<3>* tri, std::vector<std::queue<std::string>>& sendBatch, int rank) {
+    template <int dim, class T, class U>
+    static void queueSig(T& sigSet, U& processingQueue, Triangulation<dim>* tri, std::vector<std::queue<std::string>>& sendBatch, int rank) {
         std::string s = IsoSig::computeSignature(tri);
         int hash = std::hash<std::string>{}(s) % sendBatch.size();
         //Compute locally
@@ -128,6 +128,7 @@ class SearchParallel {
         }
     }
 public:
+    template <int dim>
     static void searchExhaustiveParallel(std::vector<std::string> & start, int tLimit) {
         MPI_Init(NULL, NULL);
         int nComp;
@@ -141,15 +142,15 @@ public:
         std::queue<std::string> processingQueue;
         //Slight unneeded overhead for now (recomputes signature)
         for (auto name : start) {
-            queueSig(sigSet, processingQueue, Triangulation<3>::fromIsoSig(name), sendBatch, rank);
+            queueSig<dim>(sigSet, processingQueue, Triangulation<dim>::fromIsoSig(name), sendBatch, rank);
         }
         #pragma omp parallel
         #pragma omp single
         {
-            while(!processingQueue.empty() || check_status(sigSet, processingQueue)) {
+            while(!processingQueue.empty() || check_status<dim>(sigSet, processingQueue)) {
                 #pragma omp task
                 {
-                    processNodeParallel(sigSet, processingQueue, tLimit, sendBatch, rank);
+                    processNodeParallel<dim>(sigSet, processingQueue, tLimit, sendBatch, rank);
                 }
             }
             #pragma omp taskwait

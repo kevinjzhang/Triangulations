@@ -82,7 +82,49 @@ public:
 
     static std::vector<Triangulation<4>*> getPachnerMoves (Triangulation<4>* t, int tLimit) {
         std::vector<Triangulation<4>*> adj;
-        return adj;
+        //5-1 move
+        for (int i = 0; i < t->countVertices(); i++) {
+            if (t->pachner(t->vertex(i), true, false)) {
+                Triangulation<4>* alt = new Triangulation<4>(*t, false);
+                alt->pachner(alt->vertex(i), false, true);
+                adj.push_back(alt);
+            }
+        }
+        //4-2 move
+        for (int i = 0; i < t->countEdges(); i++) {
+            if (t->pachner(t->edge(i), true, false)) {
+                Triangulation<4>* alt = new Triangulation<4>(*t, false);
+                alt->pachner(alt->edge(i), false, true);
+                adj.push_back(alt);
+            }
+        }        
+        //3-3 move
+        for (int i = 0; i < t->countTriangles(); i++) {
+            if (t->pachner(t->triangle(i), true, false)) {
+                Triangulation<4>* alt = new Triangulation<4>(*t, false);
+                alt->pachner(alt->triangle(i), false, true);
+                adj.push_back(alt);
+            }
+        }       
+        //2-4 move
+        if (t->size() + 2 <= tLimit) {
+            for (int i = 0; i < t->countTetrahedra(); i++) {
+                if (t->pachner(t->tetrahedron(i), true, false)) {
+                    Triangulation<4>* alt = new Triangulation<4>(*t, false);
+                    alt->pachner(alt->tetrahedron(i), false, true);
+                    adj.push_back(alt);
+                }
+            }        
+        }
+        //1-5 move
+        if (t->size() + 4 <= tLimit) {
+            for (int i = 0; i < t->size(); i++) {
+                Triangulation<4>* alt = new Triangulation<4>(*t, false);
+                alt->pachner(alt->pentachoron(i), false, true);
+                adj.push_back(alt);
+            }        
+        }
+        return adj;        
     }
 
     template <int dim>
