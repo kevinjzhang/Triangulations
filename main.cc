@@ -6,13 +6,17 @@
 #include <string>
 #include <type_traits>
 #include <chrono> 
+#include <mpi.h>
 
 #include "isosig.h"
 #include "search.h"
+#include "searchParallel.h"
 #include "information.h"
 
 #include<triangulation/dim3.h>
+#include<triangulation/dim4.h>
 #include<triangulation/example3.h>
+#include<triangulation/example4.h>
 #include<triangulation/detail/triangulation.h>
 #include<surfaces/normalsurfaces.h>
 #include<surfaces/normalcoords.h>
@@ -25,29 +29,58 @@
 // #define CORRECTNESS
 // #define TIMING
 #define SEARCH
-#define REGINASIG
 
-using namespace regina;
-
-int main(int argc, char *argv[]) {
-    std::string inFile = std::string(argv[1]);
-    std::string outFile = std::string(argv[2]);
-    std::ifstream in (inFile, std::ifstream::in);
-    std::ofstream out;
-    out.open(outFile);
-    int number;
-    in >> number;
-#ifdef STAT
-    std::unordered_map<int, int> hist;
+template <int dim>
+void verify_correctness(int number, std::ifstream& in,  std::ofstream& out) {
+    std::vector<std::string> names;
     for(int x = 0; x < number; x++) {
         std::string name;
         in >> name;
-        Triangulation<3>* triangulation = Triangulation<3>::fromIsoSig(name);
+        names.push_back(name);
+    }
+    #pragma omp parallel for
+    for (int i = 0; i < names.size(); i++) {
+        std::string name = names[i];
+        Triangulation<dim>* triangulation = Triangulation<dim>::fromIsoSig(name);
+        std::string newName = IsoSig::computeSignature(triangulation);
+        //Reorder labels randomly
+        std::unordered_set<std::string> s;
+        s.insert(newName);
+        for (int simp = 0; simp < triangulation->size(); ++simp) {
+            for (int perm = 0; perm < Perm<dim + 1>::nPerms; ++perm) {
+                std::string curr = IsoSig::isoSigFrom(triangulation, triangulation->simplex(simp)->index(),
+                    Perm<dim + 1>::atIndex(perm), (Isomorphism<dim>*) nullptr);
+                Triangulation<dim>* relabelled = Triangulation<dim>::fromIsoSig(curr);
+                std::string check = IsoSig::computeSignature(relabelled);
+                delete relabelled;
+                s.insert(check);
+            }
+        }
+        if (s.size() != 1) {
+            out << name << std::endl;
+        }
+        delete triangulation;
+    }    
+}
+
+template <int dim>
+void output_stats(int number, std::ifstream& in,  std::ofstream& out) {
+    std::unordered_map<int, int> hist;
+    std::vector<std::string> names;
+    for(int x = 0; x < number; x++) {
+        std::string name;
+        in >> name;
+        names.push_back(name);
+    }
+
+    #pragma omp parallel for
+    for(int x = 0; x < number; x++) {
+        Triangulation<dim>* triangulation = Triangulation<dim>::fromIsoSig(names[x]);
         //Properties is an array of information
         std::vector<SimplexInfo> properties;
         for (int i = 0; i < triangulation->size(); i++) {
-            Simplex<3>* tetrahedra = triangulation->simplex(i);
-            properties.emplace_back(SimplexInfo(tetrahedra, triangulation->size()));
+            Simplex<dim>* tetrahedra = triangulation->simplex(i);
+            properties.emplace_back(SimplexInfo(tetrahedra, i, triangulation->size()));
         }
         std::sort(properties.begin(), properties.end());
         delete triangulation;
@@ -72,42 +105,27 @@ int main(int argc, char *argv[]) {
         for (auto num : partition) {
             int count = 0;
             for (int i = 0; i < num; i++) {
-                count += properties[index].numOrderings();
+                count += properties[index].numOrderings<dim>();
                 index++;
             }
             combs = std::min(count, combs);
         }
+        #pragma omp critical
         hist[combs]++;
     }
 
     for(auto& it : hist) {
         out << it.first << " " << it.second << std::endl;
     }
-#endif
-#ifdef CORRECTNESS
+}
+
+template <int dim>
+void check_perf(int number, std::ifstream& in,  std::ofstream& out) {
+    std::vector<Triangulation<dim>*> triangulations;
     for(int x = 0; x < number; x++) {
         std::string name;
         in >> name;
-        Triangulation<3>* triangulation = Triangulation<3>::fromIsoSig(name);
-        //Reorder labels randomly
-        std::string newName = IsoSig::computeSignature(triangulation);
-        Triangulation<3>* triCopy = Triangulation<3>::fromIsoSig(IsoSig::computeSignature(triangulation));
-        if (name != triCopy->isoSig()) {
-            out << "Case Error 1" << std::endl;
-        }
-        if (newName != IsoSig::computeSignature(triCopy)) {
-            out << "Case Error 2" << std::endl;
-        }
-        delete triangulation;
-        delete triCopy;
-    }
-#endif
-#ifdef TIMING
-    std::vector<Triangulation<3>*> triangulations;
-    for(int x = 0; x < number; x++) {
-        std::string name;
-        in >> name;
-        Triangulation<3>* triangulation = Triangulation<3>::fromIsoSig(name);
+        Triangulation<dim>* triangulation = Triangulation<dim>::fromIsoSig(name);
         triangulations.push_back(triangulation);
     }
     auto start = std::chrono::high_resolution_clock::now();
@@ -124,6 +142,25 @@ int main(int argc, char *argv[]) {
     auto stop2 = std::chrono::high_resolution_clock::now();
     duration = std::chrono::duration_cast<std::chrono::microseconds>(stop2 - stop);
     out << "Old: " << duration.count() << std::endl;
+}
+
+int main(int argc, char *argv[]) {
+    std::string inFile = std::string(argv[1]);
+    std::string outFile = std::string(argv[2]);
+    std::ifstream in (inFile, std::ifstream::in);
+    std::ofstream out;
+    out.open(outFile);
+    int number;
+    in >> number;
+#ifdef STAT
+    output_stats<4>(number, in, out);
+#endif
+#ifdef CORRECTNESS
+    //4d correctness check
+    verify_correctness<4>(number, in, out);
+#endif
+#ifdef TIMING
+    check_perf<4>(number, in, out);
 #endif
 #ifdef SEARCH
     std::vector<std::string> names;
@@ -136,10 +173,11 @@ int main(int argc, char *argv[]) {
 #ifdef REGINASIG
         names.emplace_back(name);
 #else
-        names.emplace_back(IsoSig::computeSignature(Triangulation<3>::fromIsoSig(name)));
+        names.emplace_back(IsoSig::computeSignature(regina::Triangulation<3>::fromIsoSig(name)));
 #endif
     }
-    Search::searchExhaustive(names, maxHeight); 
+    //SearchParallel::searchExhaustiveParallel(names, maxHeight);
+    Search::searchExhaustive<3>(names, maxHeight); 
 #endif
     out.close();
     return 0;

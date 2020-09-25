@@ -9,16 +9,18 @@
 #include<triangulation/detail/triangulation.h>
 #include<triangulation/detail/isosig-impl.h>
 
+// #define DEBUG
+
 using namespace regina;
 using namespace detail;
 
 class IsoSig {
 private:
     IsoSig();
-
+public:
     //This is a copy of the function from regina
     template <int dim>
-    static std::string isoSigFrom (Triangulation<3>* triangulation, size_t simp, 
+    static std::string isoSigFrom (Triangulation<dim>* triangulation, size_t simp, 
             const Perm<dim+1>& vertices, Isomorphism<dim>* relabelling) {
         size_t nSimp = triangulation->size();
         size_t nFacets = ((dim + 1) * triangulation->size() + triangulation->countBoundaryFacets()) / 2;
@@ -173,18 +175,17 @@ private:
         return ans;                
     }
 
-public:
-    static std::string computeSignature(Triangulation<3>* triangulation) {
+    template <int dim>
+    static std::string computeSignature(Triangulation<dim>* triangulation) {
         std::vector<SimplexInfo> properties;
         for (int i = 0; i < triangulation->size(); i++) {
-            Simplex<3>* tetrahedra = triangulation->simplex(i);
-            properties.emplace_back(SimplexInfo(tetrahedra, triangulation->size()));
+            Simplex<dim>* tetrahedra = triangulation->simplex(i);
+            properties.emplace_back(SimplexInfo(tetrahedra, i, triangulation->size()));
         }
         std::sort(properties.begin(), properties.end());
         //Iterate through and partition into runs
         int prev = 0;
         int current = 1;
-        
         std::vector<int> partition;
         for (int i = 1; i < properties.size(); i++) {
             if (properties[prev] == properties[i]) {
@@ -196,6 +197,16 @@ public:
             }
         }
         partition.push_back(current);
+#ifdef DEBUG
+        int k = 0;
+        for (auto num : partition) {
+            std::cout << num << std::endl;
+            for (int i = 0; i < num; i++) {
+                properties[k].disp();
+                k++;
+            }
+        }
+#endif
         //Use best partition (Partition requiring minimal tetrahedra)
         int index = 0;
         int bestIndex = 0; //Starting index for best tetrahedra
@@ -204,7 +215,7 @@ public:
         for (int i = 0; i < partition.size(); i++) {
             int count = 0;
             for (int j = 0; j < partition[i]; j++) {
-                count += properties[index].numOrderings();
+                count += properties[index].numOrderings<dim>();
                 index++;
             }
             if (count < best) {
@@ -212,14 +223,13 @@ public:
                 bestIndex = index - partition[i];
                 partitionIndex = i;
             }
-            best = std::min(count, best);
         }
         std::string ans;
         for (int i = 0; i < partition[partitionIndex]; i++) {
-            auto perms = properties[bestIndex + i].getAllPerms();
+            auto perms = properties[bestIndex + i].getAllPerms<dim>();
             for (auto perm : perms) {
-                std::string curr = isoSigFrom(triangulation, triangulation->simplex(bestIndex + i)->index(), 
-                    Perm<4>::atIndex(perm), (Isomorphism<3>*) nullptr);
+                std::string curr = isoSigFrom(triangulation, triangulation->simplex(properties[bestIndex + i].getLabel())->index(), 
+                    Perm<dim + 1>::atIndex(perm), (Isomorphism<dim>*) nullptr);
                 if (ans.size() == 0) {
                     ans = curr;
                 } else {
