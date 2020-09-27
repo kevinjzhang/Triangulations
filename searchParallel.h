@@ -29,10 +29,10 @@ class SearchParallel {
             char* buffer = (char*)malloc(sizeof(char) * count);
             MPI_Recv(buffer, count, MPI_CHAR, MPI_ANY_SOURCE, tag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
             std::string recvSig = std::string(buffer);
-            #pragma omp critical(processQueue) 
+            #pragma omp critical(sig) 
             {
                 if (sigSet.count(recvSig) == 0) { 
-                    sigSet[recvSig] = Triangulation<dim>::fromIsoSig(recvSig);
+                    sigSet.insert(recvSig);
                     processingQueue.push(recvSig);
                 }
             }
@@ -46,10 +46,9 @@ class SearchParallel {
     static bool check_status(T& sigSet, U& processingQueue) {
         int flag;
         MPI_Status status;
-        MPI_Iprobe(MPI_ANY_SOURCE, tag, MPI_COMM_WORLD, &flag, &status);
         usleep(wait);
         bool res;
-        #pragma omp critical(receive)
+        #pragma omp critical(communication)
         {
             res = receive<dim>(sigSet, processingQueue);
         }
@@ -59,8 +58,13 @@ class SearchParallel {
     //Process nodes function in parallel
     template <int dim, class T, class U>
     static void processNodeParallel(T& sigSet, U& processingQueue, int tLimit, std::vector<std::queue<std::string>>& sendBatch, int rank) {
+        //MPI receive into queue -> number of times until empty
+        #pragma omp critical(communication)
+        {
+            receive<dim>(sigSet, processingQueue);
+        }
         std::string sig;
-        #pragma omp critical(processQueue)
+        #pragma omp critical(sig)
         {
             if (processingQueue.size() > 0) {
                 sig = processingQueue.front();
@@ -71,7 +75,7 @@ class SearchParallel {
         if (sig.size() == 0) {
             return;
         }
-        Triangulation<dim>* t = sigSet[sig];
+        Triangulation<dim>* t = Triangulation<dim>::fromIsoSig(sig);
         std::vector<Triangulation<dim>*> adj = Search::getPachnerMoves(t, tLimit);
         //Convert all to sigs and add to processingQueue + sigSet
         for (auto tri : adj) {
@@ -79,37 +83,30 @@ class SearchParallel {
         }
         //Deleting triangulation occurs after it has been processed
         delete t;      
-        //MPI receive into queue -> number of time it is non-empty
-        #pragma omp critical(receive)
-        {
-            receive<dim>(sigSet, processingQueue);
-        }
     }
 
     //General function for queuing signature (multiple machines)
     template <int dim, class T, class U>
     static void queueSig(T& sigSet, U& processingQueue, Triangulation<dim>* tri, std::vector<std::queue<std::string>>& sendBatch, int rank) {
         std::string s = IsoSig::computeSignature(tri);
+        delete tri;
         int hash = std::hash<std::string>{}(s) % sendBatch.size();
         //Compute locally
         if (hash == rank) {
-            #pragma omp critical(processQueue)
+            #pragma omp critical(sig)
             {
                 if (sigSet.count(s) == 0) { //New triangulation
-                    sigSet[s] = tri;
+                    sigSet.insert(s);
                     processingQueue.push(s);
-                } else { //Duplicate triangulation found
-                    delete tri;
-                }
+                } 
             }
         //Send Externally
         } else {
-            delete tri;
             //Second condition for finishing processing
-            #pragma omp critical(send)
+            #pragma omp critical(communication)
             {
                 sendBatch[hash].push(s);
-                if (sendBatch[hash].size() > batchSize || processingQueue.size() < batchSize) {
+                if (!sendBatch[hash].empty()) {
                     int size;
                     MPI_Pack_size( maxLength, MPI_CHAR, MPI_COMM_WORLD, &size );
                     int bufsize = (size + MPI_BSEND_OVERHEAD) * sendBatch[hash].size();
@@ -135,18 +132,20 @@ public:
         MPI_Comm_size(MPI_COMM_WORLD, &nComp);
         MPI_Comm_rank(MPI_COMM_WORLD, &rank);
         std::vector<std::queue<std::string>> sendBatch(nComp);
-        std::unordered_map<std::string, Triangulation<dim>*> sigSet;
+        std::unordered_set<std::string> sigSet;
         //Main application here:
         //(MPI)Must receive into this queue when message received
         std::queue<std::string> processingQueue;
         //Slight unneeded overhead for now (recomputes signature)
-        for (auto name : start) {
-            queueSig<dim>(sigSet, processingQueue, Triangulation<dim>::fromIsoSig(name), sendBatch, rank);
+        if (rank == 0) {
+            for (auto name : start) {
+                queueSig<dim>(sigSet, processingQueue, Triangulation<dim>::fromIsoSig(name), sendBatch, rank);
+            }
         }
         #pragma omp parallel
         #pragma omp single
         {
-            while(!processingQueue.empty() || check_status<dim>(sigSet, processingQueue)) {
+            while (!processingQueue.empty() || check_status<dim>(sigSet, processingQueue)) {
                 #pragma omp task
                 {
                     processNodeParallel<dim>(sigSet, processingQueue, tLimit, sendBatch, rank);

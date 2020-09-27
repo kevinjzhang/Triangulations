@@ -176,8 +176,8 @@ int main(int argc, char *argv[]) {
         names.emplace_back(IsoSig::computeSignature(regina::Triangulation<3>::fromIsoSig(name)));
 #endif
     }
-    //SearchParallel::searchExhaustiveParallel(names, maxHeight);
-    Search::searchExhaustive<3>(names, maxHeight); 
+    SearchParallel::searchExhaustiveParallel<3>(names, maxHeight);
+    // Search::searchExhaustive<4>(names, maxHeight, 10000); 
 #endif
     out.close();
     return 0;

@@ -12,7 +12,9 @@
 #include <omp.h>
 
 #include<triangulation/dim3.h>
+#include<triangulation/dim4.h>
 #include<triangulation/example3.h>
+#include<triangulation/example4.h>
 #include<triangulation/detail/triangulation.h>
 #include<triangulation/detail/isosig-impl.h>
 
@@ -29,15 +31,11 @@ private:
     template <int dim, class T, class U>
     static void processNode(T& sigSet, U& processingQueue, int tLimit) {
         std::string sig;
-        #pragma omp critical(processQueue)
+        #pragma omp critical(sig)
         {
             if (processingQueue.size() > 0) {
                 sig = processingQueue.front();
                 processingQueue.pop();
-            #ifdef MEM_LIMITS
-                sigSet.insert(sig);
-            #endif
-                std::cout << sig << std::endl;
             }
         }
         if (sig.size() == 0) {
@@ -52,15 +50,17 @@ private:
         //Convert all to sigs and add to processingQueue + sigSet
         for (auto tri : adj) {
             std::string s = IsoSig::computeSignature(tri);
-            #pragma omp critical(processQueue)
+            #pragma omp critical(sig)
             {
                 if (sigSet.count(s) == 0) { //New triangulation
                 #ifdef MEM_LIMITS
+                    sigSet.insert(s);
                     delete tri;
                 #else
                     sigSet[s] = tri;
                 #endif
                     processingQueue.push(s);
+                    std::cout << s << std::endl;
                 } else { //Duplicate triangulation found
                     delete tri;
                 }
@@ -150,10 +150,13 @@ public:
         //(MPI)Must receive into this queue when message received
         std::queue<std::string> processingQueue;
         for (auto name : start) {
-            processingQueue.push(name);
-        #ifndef MEM_LIMITS
+        #ifdef MEM_LIMITS
+            sigSet.insert(name);
+        #else
             sigSet[name] = Triangulation<dim>::fromIsoSig(name);
         #endif
+            processingQueue.push(name);
+            std::cout << name << std::endl;
         }
         #pragma omp parallel
         #pragma omp single
