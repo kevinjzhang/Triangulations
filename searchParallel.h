@@ -8,14 +8,28 @@ class SearchParallel {
     //(MPI) Batch size to decide to send
     static const int batchSize = 100;
     static const int maxLength = 100;
-    static const int wait = 50000;
+    static const int wait = 1000000;
     static const int tag = 0;
+    static const int tag1 = 1;
     SearchParallel();
 
     static void debug_info(std::string s) {
         int rank;
         MPI_Comm_rank(MPI_COMM_WORLD, &rank);
         std::cout << s << " Rank:" << rank << std::endl;
+    }
+
+    static void receiveStatus(std::vector<bool>& states, int rank, int nComp) {
+        MPI_Status status;
+        int flag;
+        MPI_Iprobe(MPI_ANY_SOURCE, tag1, MPI_COMM_WORLD, &flag, &status);
+        while (flag) {
+            int count;
+            int val;
+            MPI_Recv(&val, 1, MPI_INT, MPI_ANY_SOURCE, tag1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            states[status.MPI_SOURCE] = (bool)val;
+            MPI_Iprobe(MPI_ANY_SOURCE, tag1, MPI_COMM_WORLD, &flag, &status);
+        }
     }
 
     template <int dim, class T, class U>
@@ -43,25 +57,61 @@ class SearchParallel {
 
     //Waits for a small amount of time and checks if there is a message from any source
     template <int dim, class T, class U>
-    static bool check_status(T& sigSet, U& processingQueue) {
-        int flag;
-        MPI_Status status;
-        usleep(wait);
-        bool res;
+    static bool check_status(T& sigSet, U& processingQueue, std::vector<bool>& states, int rank, int nComp) {
+        bool res = false;    
+        states[rank] = true;
         #pragma omp critical(communication)
         {
-            res = receive<dim>(sigSet, processingQueue);
+            receiveStatus(states, rank, nComp);
+            //Make all processors aware of their state
+            int size;
+            int data = 1;
+            MPI_Pack_size(1, MPI_INT, MPI_COMM_WORLD, &size );
+            int bufsize = (size + MPI_BSEND_OVERHEAD) * nComp;
+            char* b = (char*)malloc(bufsize);
+            MPI_Buffer_attach(b, bufsize);
+            for (int i = 0; i < nComp; i++) {
+                if (i != rank) {
+                    MPI_Bsend(&data, 1, MPI_INT, i, tag1, MPI_COMM_WORLD);
+                }
+            }
+            MPI_Buffer_detach(&b, &bufsize);
+            free(b);
+        }
+        for (bool state : states) {
+            if (state == false) {
+                res = true;
+                break;
+            }
         }
         return res;
     }
 
     //Process nodes function in parallel
     template <int dim, class T, class U>
-    static void processNodeParallel(T& sigSet, U& processingQueue, int tLimit, std::vector<std::queue<std::string>>& sendBatch, int rank) {
+    static void processNodeParallel(T& sigSet, U& processingQueue, int tLimit, std::vector<std::queue<std::string>>& sendBatch,
+            std::vector<bool>& states, int rank, int nComp) {
         //MPI receive into queue -> number of times until empty
         #pragma omp critical(communication)
         {
-            receive<dim>(sigSet, processingQueue);
+            if (receive<dim>(sigSet, processingQueue)) {
+                if (states[rank]) {
+                    states[rank] = false;
+                    int size;
+                    int data = 0;
+                    MPI_Pack_size(1, MPI_INT, MPI_COMM_WORLD, &size );
+                    int bufsize = (size + MPI_BSEND_OVERHEAD) * nComp;
+                    char* b = (char*)malloc(bufsize);
+                    MPI_Buffer_attach(b, bufsize);
+                    for (int i = 0; i < nComp; i++) {
+                        if (i != rank) {
+                            MPI_Bsend(&data, 1, MPI_INT, i, tag1, MPI_COMM_WORLD);
+                        }
+                    }
+                    MPI_Buffer_detach(&b, &bufsize);
+                    free(b);
+                }
+            }
         }
         std::string sig;
         #pragma omp critical(sig)
@@ -133,6 +183,7 @@ public:
         MPI_Comm_rank(MPI_COMM_WORLD, &rank);
         std::vector<std::queue<std::string>> sendBatch(nComp);
         std::unordered_set<std::string> sigSet;
+        std::vector<bool> states(nComp, false);
         //Main application here:
         //(MPI)Must receive into this queue when message received
         std::queue<std::string> processingQueue;
@@ -145,10 +196,10 @@ public:
         #pragma omp parallel
         #pragma omp single
         {
-            while (!processingQueue.empty() || check_status<dim>(sigSet, processingQueue)) {
+            while (!processingQueue.empty() || check_status<dim>(sigSet, processingQueue, states, rank, nComp)) {
                 #pragma omp task
                 {
-                    processNodeParallel<dim>(sigSet, processingQueue, tLimit, sendBatch, rank);
+                    processNodeParallel<dim>(sigSet, processingQueue, tLimit, sendBatch, states, rank, nComp);
                 }
             }
             #pragma omp taskwait
