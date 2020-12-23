@@ -9,8 +9,6 @@
 #include<triangulation/detail/triangulation.h>
 #include<triangulation/detail/isosig-impl.h>
 
-// #define DEBUG
-
 using namespace regina;
 using namespace detail;
 
@@ -177,56 +175,42 @@ public:
 
     template <int dim>
     static std::string computeSignature(Triangulation<dim>* triangulation) {
-        std::vector<SimplexInfo> properties;
+        std::vector<SimplexInfo<dim>> properties;
         for (int i = 0; i < triangulation->size(); i++) {
             Simplex<dim>* tetrahedra = triangulation->simplex(i);
-            properties.emplace_back(SimplexInfo(tetrahedra, i, triangulation->size()));
+            properties.emplace_back(SimplexInfo<dim>(tetrahedra, i, triangulation->size()));
         }
         std::sort(properties.begin(), properties.end());
-        //Iterate through and partition into runs
+        //Iterate through and partitionSizes into runs
         int prev = 0;
-        int current = 1;
-        std::vector<int> partition;
+        int runLength = 1;
+        std::vector<int> partitionSizes;
         for (int i = 1; i < properties.size(); i++) {
             if (properties[prev] == properties[i]) {
-                current++;
+                runLength++;
             } else {
-                partition.push_back(current);
+                partitionSizes.push_back(runLength);
                 prev = i;
-                current = 1;
+                runLength = 1;
             }
         }
-        partition.push_back(current);
-#ifdef DEBUG
-        int k = 0;
-        for (auto num : partition) {
-            std::cout << num << std::endl;
-            for (int i = 0; i < num; i++) {
-                properties[k].disp();
-                k++;
-            }
-        }
-#endif
+        partitionSizes.push_back(runLength);
         //Use best partition (Partition requiring minimal tetrahedra)
         int index = 0;
         int bestIndex = 0; //Starting index for best tetrahedra
         int partitionIndex = 0; //Partition index for best tetrahedra
-        int best = INT32_MAX;
-        for (int i = 0; i < partition.size(); i++) {
-            int count = 0;
-            for (int j = 0; j < partition[i]; j++) {
-                count += properties[index].numOrderings<dim>();
-                index++;
-            }
-            if (count < best) {
-                best = count;
-                bestIndex = index - partition[i];
+        int minPartitionSize = INT32_MAX;
+        for (int i = 0; i < partitionSizes.size(); i++) {
+            index += partitionSizes[i];
+            if (partitionSizes[i] < minPartitionSize) {
+                minPartitionSize = partitionSizes[i];
+                bestIndex = index - partitionSizes[i];
                 partitionIndex = i;
             }
         }
         std::string ans;
-        for (int i = 0; i < partition[partitionIndex]; i++) {
-            auto perms = properties[bestIndex + i].getAllPerms<dim>();
+        for (int i = 0; i < partitionSizes[partitionIndex]; i++) {
+            auto perms = properties[bestIndex + i].getAllPerms();
             for (auto perm : perms) {
                 std::string curr = isoSigFrom(triangulation, triangulation->simplex(properties[bestIndex + i].getLabel())->index(), 
                     Perm<dim + 1>::atIndex(perm), (Isomorphism<dim>*) nullptr);
